@@ -175,7 +175,8 @@ jobs:
             -PRELEASE_KEY_ALIAS="${{ secrets.KEY_ALIAS }}" \
             -PRELEASE_KEY_PASSWORD="${{ secrets.KEY_PASSWORD }}" \
             -PenableAbiSplits=${SPLITS} \
-            -Dorg.gradle.jvmargs="-Xmx4g -Xms512m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8"
+            -Dorg.gradle.jvmargs="-Xmx4g -Xms512m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8" \
+            --no-configuration-cache
 
       - name: 定位产物
         run: |
