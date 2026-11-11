@@ -12,7 +12,11 @@
  * 写回三处：
  *   1. 根目录 VERSION
  *   2. app/build.gradle.kts 的 versionName / versionCode
- *   3. 生成 app/src/main/assets/version.properties（运行时读，用于「关于」页与更新检查）
+ *      —— 存在两套目标，按顺序找：
+ *        a) 本仓库根目录的 app/build.gradle.kts（独立工程时用）
+ *        b) build/base/legado/app/build.gradle.kts（当前形态：底座源码在构建期拉下来）
+ *        找不到就跳过，不算失败（CI 里底座版本号由单独一步 sed 就地改）。
+ *   3. 生成 assets/version.properties（运行时读，用于「关于」页与更新检查）
  *
  * versionCode 规则：major*10000 + minor*100 + patch
  *   例：4.1.0 -> 40100，4.10.3 -> 41003。必须单调递增，否则 Android 拒绝覆盖安装。
@@ -24,8 +28,18 @@ const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const VERSION_FILE = path.join(ROOT, 'VERSION');
-const GRADLE_FILE = path.join(ROOT, 'app', 'build.gradle.kts');
 const PROPS_FILE = path.join(ROOT, 'app', 'src', 'main', 'assets', 'version.properties');
+
+// 按优先级找必须改版本的 build.gradle.kts
+const GRADLE_CANDIDATES = [
+  path.join(ROOT, 'app', 'build.gradle.kts'),
+  path.join(ROOT, 'build', 'base', 'legado', 'app', 'build.gradle.kts'),
+];
+
+function resolveGradle() {
+  for (const p of GRADLE_CANDIDATES) if (fs.existsSync(p)) return p;
+  return null;
+}
 
 function readVersion() {
   const raw = fs.readFileSync(VERSION_FILE, 'utf8').trim();
@@ -57,14 +71,20 @@ function writeVersion(v) {
 
   fs.writeFileSync(VERSION_FILE, v.text + '\n', 'utf8');
 
-  let gradle = fs.readFileSync(GRADLE_FILE, 'utf8');
-  const before = gradle;
-  gradle = gradle.replace(/versionCode\s*=\s*\d+/, `versionCode = ${code}`);
-  gradle = gradle.replace(/versionName\s*=\s*"[^"]*"/, `versionName = "${v.text}"`);
-  if (gradle === before) {
-    throw new Error('app/build.gradle.kts 里没找到 versionCode/versionName，先跑 scripts/prepare-base.js');
+  const gradleFile = resolveGradle();
+  if (gradleFile) {
+    let gradle = fs.readFileSync(gradleFile, 'utf8');
+    const before = gradle;
+    gradle = gradle.replace(/versionCode\s*=\s*\d+/, `versionCode = ${code}`);
+    gradle = gradle.replace(/versionName\s*=\s*"[^"]*"/, `versionName = "${v.text}"`);
+    if (gradle === before) {
+      throw new Error(`${gradleFile} 里没找到 versionCode/versionName`);
+    }
+    fs.writeFileSync(gradleFile, gradle, 'utf8');
+    console.log(`[gradle] ${path.relative(ROOT, gradleFile)} -> ${v.text} (${code})`);
+  } else {
+    console.log('[gradle] 没找到 build.gradle.kts，只改 VERSION 与 assets');
   }
-  fs.writeFileSync(GRADLE_FILE, gradle, 'utf8');
 
   fs.mkdirSync(path.dirname(PROPS_FILE), { recursive: true });
   fs.writeFileSync(
