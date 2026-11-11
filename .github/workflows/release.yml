@@ -240,17 +240,37 @@ jobs:
           cat SHA256SUMS.txt
 
       - name: 从 CHANGELOG 摘出本版说明
-        id: notes
         shell: bash
         run: |
           V="${{ needs.check-version.outputs.version }}"
           awk -v v="## [$V]" 'index($0,v)==1{f=1;next} f&&/^## \[/{exit} f' CHANGELOG.md > release-notes.md
           {
-            echo "APK 命名：\`阅读-番茄排版-<abi>-${V}.apk\`"
-            echo "覆盖安装：从更早版本升级可原地覆盖，书架/进度/书源/字体全部保留。"
+            echo "APK 命名：\`阅读-番茄排版-<abi>-<版本>.apk\`"
+            echo "包名：\`io.legato.kazusa\`（与 4.00.x 的 \`io.legado.app.release\` 不是同一个应用，需并存安装）"
+            echo "签名：SHA-256 \`624e877f…42667f\`（与 4.00.x 同一把钥匙）"
+            echo
+            echo "校验：\`sha256sum -c SHA256SUMS.txt\`"
             echo
             cat release-notes.md
           } > body.md
+          cat body.md
+
+      # GitHub 存附件时会把文件名里的中文剥掉（阅读->空、番茄排版->"a" 都没了），
+      # 所以先按 ASCII 名上传，再用 API 把显示名改回中文。
+      - name: 附件先按 ASCII 名上传
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          V="${{ needs.check-version.outputs.version }}"
+          mkdir -p up
+          for f in dist/*.apk; do
+            base="$(basename "$f")"
+            abi="$(echo "$base" | sed -E 's/.*-(arm64|universal)-.*/\1/')"
+            cp "$f" "up/reader-fanqie-${abi}-${V}.apk"
+          done
+          cp dist/SHA256SUMS.txt up/SHA256SUMS.txt
+          ls -la up
 
       - name: 建 Release 并上传
         uses: softprops/action-gh-release@v2
@@ -261,5 +281,25 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            dist/*.apk
-            dist/SHA256SUMS.txt
+            up/*.apk
+            up/SHA256SUMS.txt
+
+      - name: 把附件显示名改回中文
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          V="${{ needs.check-version.outputs.version }}"
+          REL_ID="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/v${V}" --jq '.id')"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${REL_ID}/assets" \
+            --jq '.[] | "\(.id)\t\(.name)"' | while IFS=$'\t' read -r id name; do
+            case "$name" in
+              *arm64*)   NEW="阅读-番茄排版-arm64-${V}.apk" ;;
+              *universal*) NEW="阅读-番茄排版-universal-${V}.apk" ;;
+              *) continue ;;
+            esac
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/assets/${id}" \
+              -f name="$NEW" > /dev/null
+            echo "附件 ${id}: ${name} -> ${NEW}"
+          done
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${REL_ID}/assets" --jq '.[] | "\(.name)  \(.size) 字节"'
