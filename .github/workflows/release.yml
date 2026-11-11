@@ -82,12 +82,25 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: 安装 Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: 安装构建工具
+      # 不用 android-actions/setup-android@v3：
+      # 它在 ubuntu-26.04 镜像上会 `sdkmanager tools` 失败（该包已被 Google 下架），
+      # hosted 镜像本身就带完整 SDK，直接拿现成的更稳。
+      - name: 使用镜像自带 Android SDK
         run: |
-          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+          set -euo pipefail
+          if [ -z "${ANDROID_HOME:-}" ]; then
+            echo "::error::镜像没有 ANDROID_HOME"
+            exit 1
+          fi
+          echo "ANDROID_HOME = ${ANDROID_HOME}"
+          ls "${ANDROID_HOME}/platforms" || true
+          ls "${ANDROID_HOME}/build-tools" || true
+          # 兜底：缺什么补什么，只补真的缺的
+          SDKMANAGER="$(find "${ANDROID_HOME}/cmdline-tools" -name sdkmanager -type f | head -n1)"
+          if [ -z "$(ls -A "${ANDROID_HOME}/platforms" 2>/dev/null)" ]; then
+            yes | "$SDKMANAGER" --licenses > /dev/null || true
+            "$SDKMANAGER" "platforms;android-34" || true
+          fi
 
       - name: 拉底座源码
         run: node scripts/prepare-base.js
@@ -134,20 +147,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '17' }
-      - uses: android-actions/setup-android@v3
       - uses: actions/download-artifact@v4
         with: { path: dist, merge-multiple: true }
-
-      - name: 安装 apksigner
-        run: sdkmanager "build-tools;34.0.0"
 
       - name: 验签 + 验 ABI + 验版本号
         run: |
           set -euo pipefail
+          BT="$(ls -d "${ANDROID_HOME}"/build-tools/*/ | sort -V | tail -n1)"
+          echo "build-tools = ${BT}"
           for f in dist/*.apk; do
             echo "── $f"
-            "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --print-certs "$f"
-            "$ANDROID_HOME/build-tools/34.0.0/aapt2" dump badging "$f" | grep -E "package:|native-code"
+            "${BT}apksigner" verify --print-certs "$f"
+            "${BT}aapt2" dump badging "$f" | grep -E "package:|native-code"
             unzip -p "$f" classes.dex > /dev/null && echo "classes.dex 存在"
           done
 
