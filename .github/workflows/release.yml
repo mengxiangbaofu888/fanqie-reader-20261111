@@ -88,17 +88,28 @@ jobs:
       - name: 使用镜像自带 Android SDK
         run: |
           set -euo pipefail
+          # setup-java 的 with 里会把 ANDROID_HOME 置空，这里重新探测
+          for cand in /usr/local/lib/android/sdk "${HOME}/Android/Sdk" "${ANDROID_SDK_ROOT:-}"; do
+            if [ -n "${cand}" ] && [ -d "${cand}/platforms" ]; then
+              echo "ANDROID_HOME=${cand}" >> "$GITHUB_ENV"
+              echo "ANDROID_SDK_ROOT=${cand}" >> "$GITHUB_ENV"
+              export ANDROID_HOME="${cand}"
+              export ANDROID_SDK_ROOT="${cand}"
+              echo "找到 SDK: ${cand}"
+              break
+            fi
+          done
           if [ -z "${ANDROID_HOME:-}" ]; then
-            echo "::error::镜像没有 ANDROID_HOME"
+            echo "::error::找不到 Android SDK"
+            ls -d /usr/local/lib/android* 2>/dev/null || true
             exit 1
           fi
-          echo "ANDROID_HOME = ${ANDROID_HOME}"
-          ls "${ANDROID_HOME}/platforms" || true
-          ls "${ANDROID_HOME}/build-tools" || true
-          # 兜底：缺什么补什么，只补真的缺的
-          SDKMANAGER="$(find "${ANDROID_HOME}/cmdline-tools" -name sdkmanager -type f | head -n1)"
-          if [ -z "$(ls -A "${ANDROID_HOME}/platforms" 2>/dev/null)" ]; then
-            yes | "$SDKMANAGER" --licenses > /dev/null || true
+          echo "platforms:"; ls "${ANDROID_HOME}/platforms" || true
+          echo "build-tools:"; ls "${ANDROID_HOME}/build-tools" || true
+          SDKMANAGER="$(find "${ANDROID_HOME}/cmdline-tools" -name sdkmanager -type f 2>/dev/null | head -n1)"
+          # 兜底：缺 platform 34 才补，能装就装，装不上就靠镜像自带的
+          if ! ls "${ANDROID_HOME}/platforms" 2>/dev/null | grep -q 'android-3'; then
+            yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
             "$SDKMANAGER" "platforms;android-34" || true
           fi
 
@@ -108,8 +119,20 @@ jobs:
       - name: 注入本仓库资产
         run: node scripts/apply-patches.js
 
-      - name: 落实版本号
-        run: node scripts/bump-version.js ${{ needs.check-version.outputs.version }}
+      # 本仓库的 bump-version.js 只负责根 VERSION 与 assets；
+      # 底座 app/build.gradle.kts 的版本号在这里就地改，两者必须同值。
+      - name: 落实版本号（底座 + 本仓库）
+        run: |
+          set -euo pipefail
+          V="${{ needs.check-version.outputs.version }}"
+          IFS='.' read -r MA MI PA <<< "$V"
+          CODE=$(( MA * 10000 + MI * 100 + PA ))
+          G="build/base/legado/app/build.gradle.kts"
+          if [ ! -f "$G" ]; then echo "::error::$G 不存在，底座没拉下来"; exit 1; fi
+          sed -i -E "s/versionCode[[:space:]]*=[[:space:]]*[0-9]+/versionCode = ${CODE}/" "$G"
+          sed -i -E "s/versionName[[:space:]]*=[[:space:]]*\"[^\"]*\"/versionName = \"${V}\"/" "$G"
+          grep -E 'versionCode|versionName' "$G"
+          node scripts/bump-version.js "$V"
 
       - name: 还原签名密钥
         env:
