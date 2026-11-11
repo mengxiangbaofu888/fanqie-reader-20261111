@@ -116,6 +116,22 @@ jobs:
       - name: 拉底座源码
         run: node scripts/prepare-base.js
 
+      # 先确认底座真的落地，再动手改：
+      # 上一轮 build.gradle.kts 报 ENOENT，是准备阶段的报错被后续步骤掩盖了。
+      - name: 校验底座结构
+        run: |
+          set -euo pipefail
+          B="build/base/legado"
+          echo "== 顶层 =="; ls -la "$B" || true
+          for f in settings.gradle app/build.gradle.kts gradlew; do
+            if [ -e "$B/$f" ]; then echo "✓ $f"; else echo "✗ 缺 $f"; fi
+          done
+          test -f "$B/app/build.gradle.kts"
+          echo "== 取一次 helps（暴露底座自身是否可配置） =="
+          cd "$B" && chmod +x gradlew && ./gradlew -q projects --no-daemon || {
+            echo "::error::gradlew 配置失败，见上方输出"; exit 1; }
+          cd - > /dev/null
+
       - name: 注入本仓库资产
         run: node scripts/apply-patches.js
 
@@ -128,11 +144,7 @@ jobs:
           IFS='.' read -r MA MI PA <<< "$V"
           CODE=$(( MA * 10000 + MI * 100 + PA ))
           G="build/base/legado/app/build.gradle.kts"
-          if [ ! -f "$G" ]; then
-            echo "::error::$G 不存在，底座目录："
-            ls -la build/base/legado | head -30
-            exit 1
-          fi
+          test -f "$G"
           sed -i -E "s/versionCode[[:space:]]*=[[:space:]]*[0-9]+/versionCode = ${CODE}/" "$G"
           sed -i -E "s/versionName[[:space:]]*=[[:space:]]*\"[^\"]*\"/versionName = \"${V}\"/" "$G"
           grep -nE 'versionCode|versionName' "$G"
