@@ -111,7 +111,7 @@ node scripts/build-local.js --abi arm64
 node scripts/check.js             # 自检，不碰 Java
 ```
 
-需要 JDK 17 + Android SDK（platforms;android-34 + build-tools;34.0.0），详见 [构建环境](docs/构建环境.md)。
+需要 JDK 17（CI 会自动补 21）与 Android SDK（compileSdk 37 / build-tools 35+），详见 [构建环境](docs/构建环境.md) 与 [底座变更](docs/底座变更.md)。
 
 ## 四、发版规矩
 
