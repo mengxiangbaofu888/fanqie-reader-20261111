@@ -140,6 +140,14 @@ jobs:
         run: |
           set -euo pipefail
           V="${{ needs.check-version.outputs.version }}"
+          IFS='.' read -r MA MI PA <<< "$V"
+          # versionCode 只能增不能减：底座默认 32640，取它与 MA*10000+MI*100+PA 的较大者
+          WANT=$(( MA * 10000 + MI * 100 + PA ))
+          BASE_DEFAULT=32640
+          if [ "$WANT" -gt "$BASE_DEFAULT" ]; then CODE=$WANT; else CODE=$BASE_DEFAULT; fi
+          echo "APP_VERSION_NAME=${V}" >> "$GITHUB_ENV"
+          echo "COMMIT_NUMBER=${CODE}" >> "$GITHUB_ENV"
+          echo "版本名 ${V} / versionCode ${CODE}"
           node scripts/patch-base-version.js "$V"
           node scripts/bump-version.js "$V"
 
