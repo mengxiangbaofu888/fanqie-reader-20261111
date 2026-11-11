@@ -135,19 +135,12 @@ jobs:
       - name: 注入本仓库资产
         run: node scripts/apply-patches.js
 
-      # 本仓库的 bump-version.js 只负责根 VERSION 与 assets；
-      # 底座 app/build.gradle.kts 的版本号在这里就地改，两者必须同值。
+      # 底座版本号的真相是 app/version.properties，不是 build.gradle.kts
       - name: 落实版本号（底座 + 本仓库）
         run: |
           set -euo pipefail
           V="${{ needs.check-version.outputs.version }}"
-          IFS='.' read -r MA MI PA <<< "$V"
-          CODE=$(( MA * 10000 + MI * 100 + PA ))
-          G="build/base/legado/app/build.gradle.kts"
-          test -f "$G"
-          sed -i -E "s/versionCode[[:space:]]*=[[:space:]]*[0-9]+/versionCode = ${CODE}/" "$G"
-          sed -i -E "s/versionName[[:space:]]*=[[:space:]]*\"[^\"]*\"/versionName = \"${V}\"/" "$G"
-          grep -nE 'versionCode|versionName' "$G"
+          node scripts/patch-base-version.js "$V"
           node scripts/bump-version.js "$V"
 
       - name: 还原签名密钥
@@ -159,15 +152,29 @@ jobs:
 
       - name: 构建
         env:
-          KEYSTORE_FILE: ${{ github.workspace }}/keystore/release.jks
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          ABI_FILTER: ${{ matrix.flavor.abi }}
+          # 底座读的是 Gradle 属性（project.hasProperty），不是环境变量
+          VERSION: ${{ needs.check-version.outputs.version }}
+          ABI: ${{ matrix.flavor.abi }}
         run: |
+          set -euo pipefail
           cd build/base/legado
           chmod +x gradlew
-          ./gradlew assembleAppRelease --no-daemon
+          # 签名：底座在 hasProperty("RELEASE_STORE_FILE") 时才创建 signingConfig，
+          # 没这个属性就打不出签名包。
+          ./gradlew assembleAppRelease --no-daemon \
+            -PRELEASE_STORE_FILE="${GITHUB_WORKSPACE}/keystore/release.jks" \
+            -PRELEASE_STORE_PASSWORD="${{ secrets.KEYSTORE_PASSWORD }}" \
+            -PRELEASE_KEY_ALIAS="${{ secrets.KEY_ALIAS }}" \
+            -PRELEASE_KEY_PASSWORD="${{ secrets.KEY_PASSWORD }}" \
+            -PenableAbiSplits=false \
+            -PabiFilters="${ABI}" \
+            -Dorg.gradle.jvmargs="-Xmx4g -Xms512m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8"
+
+      - name: 定位产物
+        run: |
+          set -euo pipefail
+          echo "== outputs 树 =="
+          find build/base/legado/app/build/outputs -name '*.apk' -printf '%p  %k KB\n' || true
 
       - name: 收集产物并改名
         run: node scripts/collect-apk.js --suffix ${{ matrix.flavor.suffix }} --version ${{ needs.check-version.outputs.version }}
