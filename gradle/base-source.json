@@ -1,6 +1,7 @@
 {
-  "repo": "https://github.com/gedoor/legado.git",
+  "repo": "https://github.com/HapeLee/legado-with-MD3.git",
   "ref": "3.26.23",
   "baseVersion": "3.26.23",
-  "note": "底座锁定版本。改这里需要同时更新 docs/底座变更.md 并跑一次全量回归。若某个 tag 在镜像上缺失，clone 会自动退到下一个镜像。"
+  "upstreamOriginal": "https://github.com/gedoor/legado.git",
+  "note": "上游 gedoor/legado 已于 2026-05-27 清空为公告仓库（只剩 README 与一张公告图，无源码、无 tag）。本仓库改用仍保留完整历史的镜像 HapeLee/legado-with-MD3，其 3.26.23 与上游发布版同源（commit 35d013a0）。换镜像时必须同步更新本文件并在 docs/底座变更.md 留记录。"
 }
