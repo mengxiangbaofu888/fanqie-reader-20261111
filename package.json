@@ -1,0 +1,23 @@
+{
+  "name": "fanqie-reader-20261111",
+  "version": "4.1.0",
+  "private": true,
+  "description": "阅读底座 + 番茄阅读页排版 + 旷野书屋书源 + 多厂商 AI 正文纠错",
+  "license": "GPL-3.0",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "version:show": "node scripts/bump-version.js",
+    "bump:patch": "node scripts/bump-version.js patch",
+    "bump:minor": "node scripts/bump-version.js minor",
+    "bump:major": "node scripts/bump-version.js major",
+    "base": "node scripts/prepare-base.js",
+    "patch": "node scripts/apply-patches.js",
+    "patch:dry": "node scripts/apply-patches.js --dry-run",
+    "patch:rollback": "node scripts/apply-patches.js --rollback",
+    "build:arm64": "node scripts/build-local.js --abi arm64",
+    "build:universal": "node scripts/build-local.js --abi universal",
+    "check": "node scripts/check.js"
+  }
+}

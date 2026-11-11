@@ -1,0 +1,192 @@
+name: 发版
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '要发布的版本号（如 4.1.1）；留空则直接用仓库里的 VERSION'
+        required: false
+        default: ''
+
+# 发 Release 需要 contents: write；这是 GITHUB_TOKEN 的工作流级声明，不需要额外 scope。
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ── 第一关：版本号一致性 ────────────────────────────────────────
+  # tag 必须与 VERSION 完全相同，且 CHANGELOG 里必须已有该版本小节。
+  # 这三条任何一条不满足就红着退出，不产出任何包。
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      version_code: ${{ steps.v.outputs.version_code }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 校验 tag 与 VERSION 一致
+        id: v
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILE_VER="$(tr -d '\r\n' < VERSION)"
+          echo "仓库 VERSION = ${FILE_VER}"
+
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            WANT="${{ github.event.inputs.version }}"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            WANT="${GITHUB_REF_NAME#v}"
+          else
+            WANT=""
+          fi
+
+          if [ -n "${WANT}" ] && [ "${WANT}" != "${FILE_VER}" ]; then
+            echo "::error::tag/输入版本 ${WANT} 与 VERSION ${FILE_VER} 不一致"
+            exit 1
+          fi
+
+          if ! grep -q "^## \[${FILE_VER}\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md 缺少 [${FILE_VER}] 小节"
+            exit 1
+          fi
+
+          IFS='.' read -r MA MI PA <<< "${FILE_VER}"
+          CODE=$(( MA * 10000 + MI * 100 + PA ))
+          echo "version=${FILE_VER}" >> "$GITHUB_OUTPUT"
+          echo "version_code=${CODE}" >> "$GITHUB_OUTPUT"
+          echo "版本 ${FILE_VER} / versionCode ${CODE} ✓"
+
+  # ── 第二关：构建两个 ABI 包 ────────────────────────────────────
+  build:
+    needs: check-version
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor:
+          - { key: arm64,     abi: 'arm64-v8a', suffix: 'arm64' }
+          - { key: universal, abi: 'arm64-v8a,armeabi-v7a,x86_64', suffix: 'universal' }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: 安装 Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: 安装构建工具
+        run: |
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: 拉底座源码
+        run: node scripts/prepare-base.js
+
+      - name: 注入本仓库资产
+        run: node scripts/apply-patches.js
+
+      - name: 落实版本号
+        run: node scripts/bump-version.js ${{ needs.check-version.outputs.version }}
+
+      - name: 还原签名密钥
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+        run: |
+          mkdir -p keystore
+          echo "$KEYSTORE_B64" | base64 -d > keystore/release.jks
+
+      - name: 构建
+        env:
+          KEYSTORE_FILE: ${{ github.workspace }}/keystore/release.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          ABI_FILTER: ${{ matrix.flavor.abi }}
+        run: |
+          cd build/base/legado
+          chmod +x gradlew
+          ./gradlew assembleAppRelease --no-daemon
+
+      - name: 收集产物并改名
+        run: node scripts/collect-apk.js --suffix ${{ matrix.flavor.suffix }} --version ${{ needs.check-version.outputs.version }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ matrix.flavor.key }}
+          path: dist/*.apk
+          if-no-files-found: error
+
+  # ── 第三关：签名校验 ───────────────────────────────────────────
+  verify:
+    needs: [check-version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: android-actions/setup-android@v3
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+
+      - name: 安装 apksigner
+        run: sdkmanager "build-tools;34.0.0"
+
+      - name: 验签 + 验 ABI + 验版本号
+        run: |
+          set -euo pipefail
+          for f in dist/*.apk; do
+            echo "── $f"
+            "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --print-certs "$f"
+            "$ANDROID_HOME/build-tools/34.0.0/aapt2" dump badging "$f" | grep -E "package:|native-code"
+            unzip -p "$f" classes.dex > /dev/null && echo "classes.dex 存在"
+          done
+
+  # ── 第四关：发布 ───────────────────────────────────────────────
+  release:
+    needs: [check-version, verify]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+
+      - name: 生成 SHA256
+        run: |
+          cd dist
+          sha256sum *.apk > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: 从 CHANGELOG 摘出本版说明
+        id: notes
+        shell: bash
+        run: |
+          V="${{ needs.check-version.outputs.version }}"
+          awk -v v="## [$V]" 'index($0,v)==1{f=1;next} f&&/^## \[/{exit} f' CHANGELOG.md > release-notes.md
+          {
+            echo "APK 命名：\`阅读-番茄排版-<abi>-${V}.apk\`"
+            echo "覆盖安装：从更早版本升级可原地覆盖，书架/进度/书源/字体全部保留。"
+            echo
+            cat release-notes.md
+          } > body.md
+
+      - name: 建 Release 并上传
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.check-version.outputs.version }}
+          name: v${{ needs.check-version.outputs.version }}
+          body_path: body.md
+          draft: false
+          prerelease: false
+          files: |
+            dist/*.apk
+            dist/SHA256SUMS.txt

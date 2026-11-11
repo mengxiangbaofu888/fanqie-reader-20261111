@@ -1,0 +1,25 @@
+{
+  "$comment": "把本仓库的代码层改动注入底座源码。每条 patch 只在首次命中锚点时插入一次，已注入则跳过；rollback 会按 build/patched-files.txt 回滚。",
+  "patches": [
+    {
+      "id": "ai-correct-engine",
+      "disabled": true,
+      "note": "AI 纠错引擎：在底座 ChapterProvider/正文排版层挂拦截。锚点需按锁定版本的源码确认后启用。",
+      "target": "app/src/main/java/io/legado/app/ui/book/read/page/ReadView.kt",
+      "mode": "append-block",
+      "anchor": "class ReadView",
+      "marker": "fanqie:ai-correct",
+      "block": "ai-correct.kt.peer"
+    },
+    {
+      "id": "builtin-booksources",
+      "disabled": true,
+      "note": "旷野 133 书源首次启动导入：挂到 App 初始化。",
+      "target": "app/src/main/java/io/legado/app/App.kt",
+      "mode": "append-block",
+      "anchor": "class App : Application()",
+      "marker": "fanqie:builtin-booksources",
+      "block": "builtin-booksources.kt.peer"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "repo": "https://github.com/gedoor/legado.git",
+  "ref": "3.26.23",
+  "baseVersion": "3.26.23",
+  "note": "底座锁定版本。改这里需要同时更新 docs/底座变更.md 并跑一次全量回归。若某个 tag 在镜像上缺失，clone 会自动退到下一个镜像。"
+}
