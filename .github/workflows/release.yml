@@ -128,10 +128,14 @@ jobs:
           IFS='.' read -r MA MI PA <<< "$V"
           CODE=$(( MA * 10000 + MI * 100 + PA ))
           G="build/base/legado/app/build.gradle.kts"
-          if [ ! -f "$G" ]; then echo "::error::$G 不存在，底座没拉下来"; exit 1; fi
+          if [ ! -f "$G" ]; then
+            echo "::error::$G 不存在，底座目录："
+            ls -la build/base/legado | head -30
+            exit 1
+          fi
           sed -i -E "s/versionCode[[:space:]]*=[[:space:]]*[0-9]+/versionCode = ${CODE}/" "$G"
           sed -i -E "s/versionName[[:space:]]*=[[:space:]]*\"[^\"]*\"/versionName = \"${V}\"/" "$G"
-          grep -E 'versionCode|versionName' "$G"
+          grep -nE 'versionCode|versionName' "$G"
           node scripts/bump-version.js "$V"
 
       - name: 还原签名密钥
