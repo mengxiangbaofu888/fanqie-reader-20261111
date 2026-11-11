@@ -75,13 +75,16 @@ function writeVersion(v) {
   if (gradleFile) {
     let gradle = fs.readFileSync(gradleFile, 'utf8');
     const before = gradle;
-    gradle = gradle.replace(/versionCode\s*=\s*\d+/, `versionCode = ${code}`);
-    gradle = gradle.replace(/versionName\s*=\s*"[^"]*"/, `versionName = "${v.text}"`);
+    // 只改「字面量」版本号；底座的 versionCode/versionName 是表达式（读 env 与 version.properties），
+    // 那种情况由 patch-base-version.js 负责，这里保持不动。
+    gradle = gradle.replace(/versionCode\s*=\s*(\d+)(?=\s*(?:$|\/\/|;))/m, `versionCode = ${code}`);
+    gradle = gradle.replace(/versionName\s*=\s*"([^"]*)"\s*$/m, `versionName = "${v.text}"`);
     if (gradle === before) {
-      throw new Error(`${gradleFile} 里没找到 versionCode/versionName`);
+      console.log(`[gradle] ${path.relative(ROOT, gradleFile)} 用的是表达式版本号，交给 patch-base-version.js`);
+    } else {
+      fs.writeFileSync(gradleFile, gradle, 'utf8');
+      console.log(`[gradle] ${path.relative(ROOT, gradleFile)} -> ${v.text} (${code})`);
     }
-    fs.writeFileSync(gradleFile, gradle, 'utf8');
-    console.log(`[gradle] ${path.relative(ROOT, gradleFile)} -> ${v.text} (${code})`);
   } else {
     console.log('[gradle] 没找到 build.gradle.kts，只改 VERSION 与 assets');
   }
