@@ -159,15 +159,22 @@ jobs:
           set -euo pipefail
           cd build/base/legado
           chmod +x gradlew
-          # 签名：底座在 hasProperty("RELEASE_STORE_FILE") 时才创建 signingConfig，
-          # 没这个属性就打不出签名包。
-          ./gradlew assembleAppRelease --no-daemon \
+          # 变体名规则（底座 flavor = mode × engine）：
+          #   app + core  = 基础版（无本地漫画引擎）→ appCoreRelease
+          #   app + comic = 漫画增强版（带本地引擎，体积大）
+          #   universal  = 基础版 + 通用 ABI 包（含 x86_64，模拟器可用）
+          # 签名：底座在 hasProperty("RELEASE_STORE_FILE") 时才创建 signingConfig。
+          case "${{ matrix.flavor.key }}" in
+            arm64)     TASKS="assembleAppCoreRelease"; SPLITS=true ;;
+            universal) TASKS="assembleAppCoreRelease"; SPLITS=true ;;
+            *)         echo "::error::未知 flavor"; exit 1 ;;
+          esac
+          ./gradlew ${TASKS} --no-daemon \
             -PRELEASE_STORE_FILE="${GITHUB_WORKSPACE}/keystore/release.jks" \
             -PRELEASE_STORE_PASSWORD="${{ secrets.KEYSTORE_PASSWORD }}" \
             -PRELEASE_KEY_ALIAS="${{ secrets.KEY_ALIAS }}" \
             -PRELEASE_KEY_PASSWORD="${{ secrets.KEY_PASSWORD }}" \
-            -PenableAbiSplits=false \
-            -PabiFilters="${ABI}" \
+            -PenableAbiSplits=${SPLITS} \
             -Dorg.gradle.jvmargs="-Xmx4g -Xms512m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8"
 
       - name: 定位产物
